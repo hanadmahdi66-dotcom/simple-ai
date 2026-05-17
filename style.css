@@ -1,172 +1,395 @@
-* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
+const STORAGE = {
+  user: "hanad_current_user",
+  registry: "hanad_users",
+  friends: (id) => `hanad_friends_${id}`,
+  chat: (a, b) => `hanad_chat_${[a, b].sort().join("_")}`,
+};
+
+const ONLINE_MS = 45000;
+const HEARTBEAT_MS = 8000;
+const POLL_MS = 2000;
+
+let currentUser = null;
+let activeFriend = null;
+let pollTimer = null;
+
+const $ = (id) => document.getElementById(id);
+
+const screens = {
+  login: $("loginScreen"),
+  friends: $("friendsScreen"),
+  chat: $("chatScreen"),
+};
+
+function showScreen(name) {
+  Object.values(screens).forEach((s) => s.classList.remove("active"));
+  screens[name].classList.add("active");
 }
 
-body {
-  font-family: "Segoe UI", system-ui, sans-serif;
-  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
-  min-height: 100vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 1rem;
-}
-
-.chat-app {
-  width: 100%;
-  max-width: 420px;
-  height: 600px;
-  background: #fff;
-  border-radius: 16px;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.chat-header {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 16px 20px;
-  background: #075e54;
-  color: #fff;
-}
-
-.avatar {
-  width: 44px;
-  height: 44px;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.2);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: 700;
-  font-size: 1.1rem;
-}
-
-.header-info h1 {
-  font-size: 1.1rem;
-  font-weight: 600;
-}
-
-.status {
-  font-size: 0.75rem;
-  opacity: 0.85;
-}
-
-.chat-messages {
-  flex: 1;
-  overflow-y: auto;
-  padding: 16px;
-  background: #e5ddd5;
-  background-image: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23d4cdc4' fill-opacity='0.4'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.message {
-  display: flex;
-  flex-direction: column;
-  max-width: 80%;
-  animation: fadeIn 0.25s ease;
-}
-
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(8px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
+function loadJSON(key, fallback) {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch {
+    return fallback;
   }
 }
 
-.message.sent {
-  align-self: flex-end;
-  align-items: flex-end;
+function saveJSON(key, data) {
+  localStorage.setItem(key, JSON.stringify(data));
 }
 
-.message.received {
-  align-self: flex-start;
-  align-items: flex-start;
+function normalizeId(id) {
+  return id.trim().toLowerCase().replace(/[^a-z0-9_]/g, "");
 }
 
-.bubble {
-  padding: 10px 14px;
-  border-radius: 12px;
-  font-size: 0.95rem;
-  line-height: 1.4;
-  word-wrap: break-word;
+function getRegistry() {
+  return loadJSON(STORAGE.registry, {});
 }
 
-.sent .bubble {
-  background: #dcf8c6;
-  border-bottom-right-radius: 4px;
+function saveUserToRegistry(user) {
+  const reg = getRegistry();
+  reg[user.id] = {
+    name: user.name,
+    lastSeen: Date.now(),
+  };
+  saveJSON(STORAGE.registry, reg);
 }
 
-.received .bubble {
-  background: #fff;
-  border-bottom-left-radius: 4px;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+function isOnline(userId) {
+  const reg = getRegistry();
+  const u = reg[userId];
+  if (!u || !u.lastSeen) return false;
+  return Date.now() - u.lastSeen < ONLINE_MS;
 }
 
-.time {
-  font-size: 0.65rem;
-  color: #667781;
-  margin-top: 4px;
-  padding: 0 4px;
+function heartbeat() {
+  if (!currentUser) return;
+  saveUserToRegistry(currentUser);
 }
 
-.chat-input {
-  display: flex;
-  gap: 8px;
-  padding: 12px 16px;
-  background: #f0f2f5;
-  border-top: 1px solid #e0e0e0;
+function getFriends() {
+  if (!currentUser) return [];
+  return loadJSON(STORAGE.friends(currentUser.id), []);
 }
 
-.chat-input input {
-  flex: 1;
-  padding: 12px 16px;
-  border: none;
-  border-radius: 24px;
-  font-size: 0.95rem;
-  outline: none;
-  background: #fff;
+function saveFriends(list) {
+  saveJSON(STORAGE.friends(currentUser.id), list);
 }
 
-.chat-input input:focus {
-  box-shadow: 0 0 0 2px #075e54;
+function getChatKey(friendId) {
+  return STORAGE.chat(currentUser.id, friendId);
 }
 
-.chat-input button {
-  width: 48px;
-  height: 48px;
-  border: none;
-  border-radius: 50%;
-  background: #075e54;
-  color: #fff;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: background 0.2s, transform 0.15s;
+function getMessages(friendId) {
+  return loadJSON(getChatKey(friendId), []);
 }
 
-.chat-input button:hover {
-  background: #128c7e;
+function saveMessages(friendId, messages) {
+  saveJSON(getChatKey(friendId), messages);
 }
 
-.chat-input button:active {
-  transform: scale(0.95);
+function getInitial(name) {
+  return (name || "?").charAt(0).toUpperCase();
 }
 
-.chat-input button:disabled {
-  background: #ccc;
-  cursor: not-allowed;
+function getTime(ts) {
+  return new Date(ts || Date.now()).toLocaleTimeString([], {
+    hour: "numeric",
+    minute: "2-digit",
+  });
 }
+
+function init3DTilt() {
+  const app = $("chatApp");
+  const scene = document.querySelector(".scene");
+
+  scene.addEventListener("mousemove", (e) => {
+    const rect = scene.getBoundingClientRect();
+    const x = (e.clientX - rect.left) / rect.width - 0.5;
+    const y = (e.clientY - rect.top) / rect.height - 0.5;
+    app.style.transform = `rotateY(${x * 8}deg) rotateX(${-y * 6}deg)`;
+  });
+
+  scene.addEventListener("mouseleave", () => {
+    app.style.transform = "rotateY(0) rotateX(0)";
+  });
+}
+
+function login(user) {
+  currentUser = user;
+  saveJSON(STORAGE.user, user);
+  saveUserToRegistry(user);
+
+  $("myAvatar").textContent = getInitial(user.name);
+  $("myName").textContent = user.name;
+  $("displayMyId").textContent = user.id;
+
+  renderFriends();
+  showScreen("friends");
+  startPolling();
+}
+
+function logout() {
+  currentUser = null;
+  activeFriend = null;
+  localStorage.removeItem(STORAGE.user);
+  stopPolling();
+  showScreen("login");
+  $("userId").value = "";
+  $("userName").value = "";
+}
+
+function renderFriends() {
+  const list = $("friendList");
+  const friends = getFriends();
+  const reg = getRegistry();
+
+  list.innerHTML = "";
+  $("noFriends").classList.toggle("hidden", friends.length > 0);
+
+  friends.forEach((fid) => {
+    const info = reg[fid] || { name: fid };
+    const online = isOnline(fid);
+
+    const li = document.createElement("li");
+    li.className = "friend-item";
+    li.innerHTML = `
+      <div class="avatar">${getInitial(info.name)}</div>
+      <div class="friend-item-info">
+        <strong>${escapeHtml(info.name)}</strong>
+        <span>${online ? "● Online" : "○ Offline"}</span>
+      </div>
+    `;
+    li.addEventListener("click", () => openChat(fid, info.name));
+    list.appendChild(li);
+  });
+}
+
+function escapeHtml(text) {
+  const d = document.createElement("div");
+  d.textContent = text;
+  return d.innerHTML;
+}
+
+function openChat(friendId, friendDisplayName) {
+  const reg = getRegistry();
+  const info = reg[friendId] || { name: friendDisplayName || friendId };
+
+  activeFriend = { id: friendId, name: info.name };
+  renderedCount = 0;
+  $("friendAvatar").textContent = getInitial(info.name);
+  $("friendName").textContent = info.name;
+
+  renderMessages(true);
+  updateChatOnlineState();
+  showScreen("chat");
+  if (isOnline(friendId)) $("messageInput").focus();
+}
+
+function updateChatOnlineState() {
+  if (!activeFriend) return;
+
+  const online = isOnline(activeFriend.id);
+  const statusEl = $("friendStatus");
+  const input = $("messageInput");
+  const btn = $("sendBtn");
+  const notice = $("offlineNotice");
+
+  statusEl.innerHTML = online
+    ? '<span class="dot"></span> Online — you can send messages'
+    : '<span class="dot offline"></span> Offline';
+
+  input.disabled = !online;
+  btn.disabled = !online || !input.value.trim();
+  notice.classList.toggle("hidden", online);
+
+  if (!online) input.value = "";
+}
+
+let renderedCount = 0;
+
+function renderMessages(force = false) {
+  const box = $("chatMessages");
+  if (!activeFriend || !currentUser) return;
+
+  const msgs = getMessages(activeFriend.id);
+
+  if (msgs.length === 0) {
+    if (force || box.children.length === 0) {
+      box.innerHTML = "";
+      const empty = document.createElement("p");
+      empty.className = "empty-msg";
+      empty.style.padding = "20px";
+      empty.textContent = "No messages yet. Chat when your friend is online!";
+      box.appendChild(empty);
+    }
+    renderedCount = 0;
+    return;
+  }
+
+  if (!force && msgs.length === renderedCount) return;
+
+  if (force || renderedCount === 0) {
+    box.innerHTML = "";
+    msgs.forEach((m) => {
+      const type = m.from === currentUser.id ? "sent" : "received";
+      appendMessageDOM(m.text, type, m.time, false);
+    });
+    renderedCount = msgs.length;
+  } else if (msgs.length > renderedCount) {
+    for (let i = renderedCount; i < msgs.length; i++) {
+      const m = msgs[i];
+      const type = m.from === currentUser.id ? "sent" : "received";
+      appendMessageDOM(m.text, type, m.time, false);
+    }
+    renderedCount = msgs.length;
+  }
+
+  box.scrollTop = box.scrollHeight;
+}
+
+function appendMessageDOM(text, type, time, scroll = true) {
+  const box = $("chatMessages");
+  const empty = box.querySelector(".empty-msg");
+  if (empty) empty.remove();
+
+  const messageEl = document.createElement("div");
+  messageEl.className = `message ${type}`;
+
+  const bubble = document.createElement("div");
+  bubble.className = "bubble";
+  bubble.textContent = text;
+
+  const timeEl = document.createElement("span");
+  timeEl.className = "time";
+  timeEl.textContent = getTime(time);
+
+  messageEl.appendChild(bubble);
+  messageEl.appendChild(timeEl);
+  box.appendChild(messageEl);
+
+  if (scroll) box.scrollTop = box.scrollHeight;
+}
+
+function sendMessage() {
+  if (!currentUser || !activeFriend) return;
+  if (!isOnline(activeFriend.id)) return;
+
+  const text = $("messageInput").value.trim();
+  if (!text) return;
+
+  const msg = {
+    from: currentUser.id,
+    text,
+    time: Date.now(),
+  };
+
+  const msgs = getMessages(activeFriend.id);
+  msgs.push(msg);
+  saveMessages(activeFriend.id, msgs);
+
+  appendMessageDOM(text, "sent", msg.time);
+  renderedCount = msgs.length;
+  $("messageInput").value = "";
+  $("sendBtn").disabled = true;
+}
+
+function pollUpdates() {
+  heartbeat();
+  if (screens.friends.classList.contains("active")) {
+    renderFriends();
+  }
+  if (screens.chat.classList.contains("active") && activeFriend) {
+    updateChatOnlineState();
+    renderMessages();
+  }
+}
+
+function startPolling() {
+  stopPolling();
+  heartbeat();
+  pollTimer = setInterval(pollUpdates, POLL_MS);
+}
+
+function stopPolling() {
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer = null;
+}
+
+/* Events */
+$("loginForm").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const id = normalizeId($("userId").value);
+  const name = $("userName").value.trim();
+
+  if (!id || id.length < 3) {
+    alert("ID must be at least 3 characters (letters, numbers, underscore).");
+    return;
+  }
+  if (!name) {
+    alert("Please enter your display name.");
+    return;
+  }
+
+  login({ id, name });
+});
+
+$("addFriendForm").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const fid = normalizeId($("friendIdInput").value);
+
+  if (!fid) return;
+  if (fid === currentUser.id) {
+    alert("You cannot add yourself.");
+    return;
+  }
+
+  const reg = getRegistry();
+  if (!reg[fid]) {
+    reg[fid] = { name: fid, lastSeen: 0 };
+    saveJSON(STORAGE.registry, reg);
+  }
+
+  const friends = getFriends();
+  if (friends.includes(fid)) {
+    alert("Already in your friends list.");
+    $("friendIdInput").value = "";
+    return;
+  }
+
+  friends.push(fid);
+  saveFriends(friends);
+  $("friendIdInput").value = "";
+  renderFriends();
+});
+
+$("logoutBtn").addEventListener("click", logout);
+$("backBtn").addEventListener("click", () => {
+  activeFriend = null;
+  showScreen("friends");
+  renderFriends();
+});
+
+$("sendBtn").addEventListener("click", sendMessage);
+$("messageInput").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") sendMessage();
+});
+$("messageInput").addEventListener("input", () => {
+  $("sendBtn").disabled =
+    !activeFriend ||
+    !isOnline(activeFriend.id) ||
+    !$("messageInput").value.trim();
+});
+
+/* Boot */
+init3DTilt();
+
+const saved = loadJSON(STORAGE.user, null);
+if (saved && saved.id && saved.name) {
+  login(saved);
+} else {
+  showScreen("login");
+}
+
+window.addEventListener("beforeunload", heartbeat);
