@@ -165,6 +165,39 @@ body {
   margin-top: 14px;
 }
 
+.connection-status {
+  font-size: 0.75rem;
+  padding: 8px 12px;
+  border-radius: 8px;
+  text-align: center;
+  margin-bottom: 12px;
+}
+
+.connection-status.connected {
+  background: #d4edda;
+  color: #155724;
+}
+
+.connection-status.disconnected {
+  background: #f8d7da;
+  color: #721c24;
+}
+
+.server-link-bar {
+  padding: 8px 12px;
+  background: #dcf8c6;
+  font-size: 0.72rem;
+  color: #075e54;
+  text-align: center;
+  flex-shrink: 0;
+  word-break: break-all;
+}
+
+.server-link-bar a {
+  color: #075e54;
+  font-weight: 600;
+}
+
 /* Header */
 .chat-header {
   display: flex;
@@ -548,4 +581,5 @@ body {
   cursor: not-allowed;
   box-shadow: none;
 }
+
 
