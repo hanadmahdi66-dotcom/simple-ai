@@ -393,3 +393,4 @@ if (saved && saved.id && saved.name) {
 }
 
 window.addEventListener("beforeunload", heartbeat);
+
