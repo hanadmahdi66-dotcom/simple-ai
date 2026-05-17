@@ -1,395 +1,551 @@
-const STORAGE = {
-  user: "hanad_current_user",
-  registry: "hanad_users",
-  friends: (id) => `hanad_friends_${id}`,
-  chat: (a, b) => `hanad_chat_${[a, b].sort().join("_")}`,
-};
-
-const ONLINE_MS = 45000;
-const HEARTBEAT_MS = 8000;
-const POLL_MS = 2000;
-
-let currentUser = null;
-let activeFriend = null;
-let pollTimer = null;
-
-const $ = (id) => document.getElementById(id);
-
-const screens = {
-  login: $("loginScreen"),
-  friends: $("friendsScreen"),
-  chat: $("chatScreen"),
-};
-
-function showScreen(name) {
-  Object.values(screens).forEach((s) => s.classList.remove("active"));
-  screens[name].classList.add("active");
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
 }
 
-function loadJSON(key, fallback) {
-  try {
-    const raw = localStorage.getItem(key);
-    return raw ? JSON.parse(raw) : fallback;
-  } catch {
-    return fallback;
+body {
+  font-family: "Segoe UI", system-ui, sans-serif;
+  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  overflow: hidden;
+}
+
+/* 3D scene */
+.scene {
+  perspective: 1200px;
+  width: 100%;
+  max-width: 420px;
+}
+
+.chat-app {
+  width: 100%;
+  height: 640px;
+  background: #fff;
+  border-radius: 20px;
+  box-shadow:
+    0 25px 80px rgba(0, 0, 0, 0.4),
+    0 0 0 1px rgba(255, 255, 255, 0.05) inset;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  transform-style: preserve-3d;
+  transition: transform 0.15s ease-out;
+  position: relative;
+}
+
+.screen {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  opacity: 0;
+  pointer-events: none;
+  transform: rotateY(-12deg) translateZ(-40px);
+  transition: opacity 0.4s, transform 0.5s cubic-bezier(0.34, 1.2, 0.64, 1);
+}
+
+.screen.active {
+  opacity: 1;
+  pointer-events: auto;
+  transform: rotateY(0) translateZ(0);
+  z-index: 2;
+}
+
+/* Login card 3D */
+#loginScreen {
+  justify-content: center;
+  align-items: center;
+  padding: 24px;
+  background: linear-gradient(160deg, #075e54 0%, #128c7e 100%);
+}
+
+.card-3d {
+  perspective: 800px;
+  width: 100%;
+}
+
+.card-inner {
+  background: rgba(255, 255, 255, 0.97);
+  border-radius: 20px;
+  padding: 28px 24px;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.25);
+  transform-style: preserve-3d;
+  animation: cardFloat 4s ease-in-out infinite;
+}
+
+@keyframes cardFloat {
+  0%, 100% { transform: translateY(0) rotateX(2deg); }
+  50% { transform: translateY(-6px) rotateX(-2deg); }
+}
+
+.logo-3d {
+  font-size: 3rem;
+  text-align: center;
+  margin-bottom: 8px;
+  animation: logoSpin 6s ease-in-out infinite;
+  transform-style: preserve-3d;
+}
+
+@keyframes logoSpin {
+  0%, 100% { transform: rotateY(0deg) scale(1); }
+  50% { transform: rotateY(180deg) scale(1.1); }
+}
+
+.card-inner h1 {
+  text-align: center;
+  color: #075e54;
+  font-size: 1.5rem;
+  margin-bottom: 4px;
+}
+
+.subtitle {
+  text-align: center;
+  color: #667781;
+  font-size: 0.85rem;
+  margin-bottom: 20px;
+}
+
+#loginForm label {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #54656f;
+  margin-bottom: 4px;
+  margin-top: 12px;
+}
+
+#loginForm input {
+  width: 100%;
+  padding: 12px 14px;
+  border: 2px solid #e9edef;
+  border-radius: 12px;
+  font-size: 0.95rem;
+  outline: none;
+  transition: border-color 0.2s, transform 0.2s;
+}
+
+#loginForm input:focus {
+  border-color: #075e54;
+  transform: translateZ(8px);
+}
+
+.btn-primary {
+  width: 100%;
+  margin-top: 20px;
+  padding: 14px;
+  border: none;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #075e54, #128c7e);
+  color: #fff;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.2s, box-shadow 0.2s;
+  box-shadow: 0 6px 20px rgba(7, 94, 84, 0.4);
+}
+
+.btn-primary:hover {
+  transform: translateY(-2px) scale(1.02);
+  box-shadow: 0 10px 28px rgba(7, 94, 84, 0.5);
+}
+
+.btn-primary:active {
+  transform: translateY(0) scale(0.98);
+}
+
+.hint {
+  text-align: center;
+  font-size: 0.72rem;
+  color: #8696a0;
+  margin-top: 14px;
+}
+
+/* Header */
+.chat-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  background: #075e54;
+  color: #fff;
+  flex-shrink: 0;
+}
+
+.avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 1rem;
+  transform-style: preserve-3d;
+  animation: avatarPulse 3s ease-in-out infinite;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+@keyframes avatarPulse {
+  0%, 100% { transform: scale(1) rotateY(0deg); }
+  50% { transform: scale(1.05) rotateY(8deg); }
+}
+
+.header-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.header-info h1 {
+  font-size: 1.05rem;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.status {
+  font-size: 0.72rem;
+  opacity: 0.9;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #25d366;
+  box-shadow: 0 0 8px #25d366;
+  animation: dotGlow 1.5s ease-in-out infinite;
+}
+
+.dot.offline {
+  background: #8696a0;
+  box-shadow: none;
+  animation: none;
+}
+
+@keyframes dotGlow {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.7; transform: scale(0.9); }
+}
+
+.btn-icon {
+  width: 40px;
+  height: 40px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.15);
+  color: #fff;
+  font-size: 1.2rem;
+  cursor: pointer;
+  transition: transform 0.2s, background 0.2s;
+}
+
+.btn-icon:hover {
+  background: rgba(255, 255, 255, 0.25);
+  transform: scale(1.08);
+}
+
+/* Friends panel */
+.panel {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  background: #f0f2f5;
+}
+
+.panel h2 {
+  font-size: 0.85rem;
+  color: #54656f;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 12px;
+}
+
+.add-friend {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.add-friend input {
+  flex: 1;
+  padding: 10px 14px;
+  border: none;
+  border-radius: 10px;
+  font-size: 0.9rem;
+  outline: none;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+
+.btn-small {
+  padding: 10px 18px;
+  border: none;
+  border-radius: 10px;
+  background: #075e54;
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.15s;
+}
+
+.btn-small:hover {
+  transform: scale(1.05);
+}
+
+.friend-list {
+  list-style: none;
+}
+
+.friend-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px;
+  background: #fff;
+  border-radius: 14px;
+  margin-bottom: 10px;
+  cursor: pointer;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.06);
+  transition: transform 0.25s, box-shadow 0.25s;
+  transform-style: preserve-3d;
+}
+
+.friend-item:hover {
+  transform: translateX(6px) rotateY(-4deg) translateZ(10px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+}
+
+.friend-item .avatar {
+  width: 48px;
+  height: 48px;
+  animation: none;
+}
+
+.friend-item-info {
+  flex: 1;
+}
+
+.friend-item-info strong {
+  display: block;
+  font-size: 0.95rem;
+  color: #111;
+}
+
+.friend-item-info span {
+  font-size: 0.75rem;
+  color: #667781;
+}
+
+.empty-msg {
+  text-align: center;
+  color: #8696a0;
+  font-size: 0.9rem;
+  padding: 24px;
+}
+
+.hidden {
+  display: none !important;
+}
+
+.my-id-bar {
+  padding: 12px 16px;
+  background: #e9edef;
+  font-size: 0.8rem;
+  color: #54656f;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.my-id-bar strong {
+  color: #075e54;
+  font-family: monospace;
+}
+
+/* Messages 3D */
+.perspective-3d {
+  perspective: 600px;
+  transform-style: preserve-3d;
+}
+
+.chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  background: #e5ddd5;
+  background-image: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23d4cdc4' fill-opacity='0.4'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.message {
+  display: flex;
+  flex-direction: column;
+  max-width: 82%;
+  transform-style: preserve-3d;
+  animation: message3dIn 0.45s cubic-bezier(0.34, 1.3, 0.64, 1) forwards;
+}
+
+@keyframes message3dIn {
+  from {
+    opacity: 0;
+    transform: translateY(20px) rotateX(-25deg) scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) rotateX(0) scale(1);
   }
 }
 
-function saveJSON(key, data) {
-  localStorage.setItem(key, JSON.stringify(data));
+.message.sent {
+  align-self: flex-end;
+  align-items: flex-end;
 }
 
-function normalizeId(id) {
-  return id.trim().toLowerCase().replace(/[^a-z0-9_]/g, "");
+.message.received {
+  align-self: flex-start;
+  align-items: flex-start;
 }
 
-function getRegistry() {
-  return loadJSON(STORAGE.registry, {});
+.message.sent .bubble {
+  animation-name: message3dInRight;
 }
 
-function saveUserToRegistry(user) {
-  const reg = getRegistry();
-  reg[user.id] = {
-    name: user.name,
-    lastSeen: Date.now(),
-  };
-  saveJSON(STORAGE.registry, reg);
-}
-
-function isOnline(userId) {
-  const reg = getRegistry();
-  const u = reg[userId];
-  if (!u || !u.lastSeen) return false;
-  return Date.now() - u.lastSeen < ONLINE_MS;
-}
-
-function heartbeat() {
-  if (!currentUser) return;
-  saveUserToRegistry(currentUser);
-}
-
-function getFriends() {
-  if (!currentUser) return [];
-  return loadJSON(STORAGE.friends(currentUser.id), []);
-}
-
-function saveFriends(list) {
-  saveJSON(STORAGE.friends(currentUser.id), list);
-}
-
-function getChatKey(friendId) {
-  return STORAGE.chat(currentUser.id, friendId);
-}
-
-function getMessages(friendId) {
-  return loadJSON(getChatKey(friendId), []);
-}
-
-function saveMessages(friendId, messages) {
-  saveJSON(getChatKey(friendId), messages);
-}
-
-function getInitial(name) {
-  return (name || "?").charAt(0).toUpperCase();
-}
-
-function getTime(ts) {
-  return new Date(ts || Date.now()).toLocaleTimeString([], {
-    hour: "numeric",
-    minute: "2-digit",
-  });
-}
-
-function init3DTilt() {
-  const app = $("chatApp");
-  const scene = document.querySelector(".scene");
-
-  scene.addEventListener("mousemove", (e) => {
-    const rect = scene.getBoundingClientRect();
-    const x = (e.clientX - rect.left) / rect.width - 0.5;
-    const y = (e.clientY - rect.top) / rect.height - 0.5;
-    app.style.transform = `rotateY(${x * 8}deg) rotateX(${-y * 6}deg)`;
-  });
-
-  scene.addEventListener("mouseleave", () => {
-    app.style.transform = "rotateY(0) rotateX(0)";
-  });
-}
-
-function login(user) {
-  currentUser = user;
-  saveJSON(STORAGE.user, user);
-  saveUserToRegistry(user);
-
-  $("myAvatar").textContent = getInitial(user.name);
-  $("myName").textContent = user.name;
-  $("displayMyId").textContent = user.id;
-
-  renderFriends();
-  showScreen("friends");
-  startPolling();
-}
-
-function logout() {
-  currentUser = null;
-  activeFriend = null;
-  localStorage.removeItem(STORAGE.user);
-  stopPolling();
-  showScreen("login");
-  $("userId").value = "";
-  $("userName").value = "";
-}
-
-function renderFriends() {
-  const list = $("friendList");
-  const friends = getFriends();
-  const reg = getRegistry();
-
-  list.innerHTML = "";
-  $("noFriends").classList.toggle("hidden", friends.length > 0);
-
-  friends.forEach((fid) => {
-    const info = reg[fid] || { name: fid };
-    const online = isOnline(fid);
-
-    const li = document.createElement("li");
-    li.className = "friend-item";
-    li.innerHTML = `
-      <div class="avatar">${getInitial(info.name)}</div>
-      <div class="friend-item-info">
-        <strong>${escapeHtml(info.name)}</strong>
-        <span>${online ? "● Online" : "○ Offline"}</span>
-      </div>
-    `;
-    li.addEventListener("click", () => openChat(fid, info.name));
-    list.appendChild(li);
-  });
-}
-
-function escapeHtml(text) {
-  const d = document.createElement("div");
-  d.textContent = text;
-  return d.innerHTML;
-}
-
-function openChat(friendId, friendDisplayName) {
-  const reg = getRegistry();
-  const info = reg[friendId] || { name: friendDisplayName || friendId };
-
-  activeFriend = { id: friendId, name: info.name };
-  renderedCount = 0;
-  $("friendAvatar").textContent = getInitial(info.name);
-  $("friendName").textContent = info.name;
-
-  renderMessages(true);
-  updateChatOnlineState();
-  showScreen("chat");
-  if (isOnline(friendId)) $("messageInput").focus();
-}
-
-function updateChatOnlineState() {
-  if (!activeFriend) return;
-
-  const online = isOnline(activeFriend.id);
-  const statusEl = $("friendStatus");
-  const input = $("messageInput");
-  const btn = $("sendBtn");
-  const notice = $("offlineNotice");
-
-  statusEl.innerHTML = online
-    ? '<span class="dot"></span> Online — you can send messages'
-    : '<span class="dot offline"></span> Offline';
-
-  input.disabled = !online;
-  btn.disabled = !online || !input.value.trim();
-  notice.classList.toggle("hidden", online);
-
-  if (!online) input.value = "";
-}
-
-let renderedCount = 0;
-
-function renderMessages(force = false) {
-  const box = $("chatMessages");
-  if (!activeFriend || !currentUser) return;
-
-  const msgs = getMessages(activeFriend.id);
-
-  if (msgs.length === 0) {
-    if (force || box.children.length === 0) {
-      box.innerHTML = "";
-      const empty = document.createElement("p");
-      empty.className = "empty-msg";
-      empty.style.padding = "20px";
-      empty.textContent = "No messages yet. Chat when your friend is online!";
-      box.appendChild(empty);
-    }
-    renderedCount = 0;
-    return;
+@keyframes message3dInRight {
+  from {
+    opacity: 0;
+    transform: translateX(30px) rotateY(20deg) scale(0.85);
   }
-
-  if (!force && msgs.length === renderedCount) return;
-
-  if (force || renderedCount === 0) {
-    box.innerHTML = "";
-    msgs.forEach((m) => {
-      const type = m.from === currentUser.id ? "sent" : "received";
-      appendMessageDOM(m.text, type, m.time, false);
-    });
-    renderedCount = msgs.length;
-  } else if (msgs.length > renderedCount) {
-    for (let i = renderedCount; i < msgs.length; i++) {
-      const m = msgs[i];
-      const type = m.from === currentUser.id ? "sent" : "received";
-      appendMessageDOM(m.text, type, m.time, false);
-    }
-    renderedCount = msgs.length;
-  }
-
-  box.scrollTop = box.scrollHeight;
-}
-
-function appendMessageDOM(text, type, time, scroll = true) {
-  const box = $("chatMessages");
-  const empty = box.querySelector(".empty-msg");
-  if (empty) empty.remove();
-
-  const messageEl = document.createElement("div");
-  messageEl.className = `message ${type}`;
-
-  const bubble = document.createElement("div");
-  bubble.className = "bubble";
-  bubble.textContent = text;
-
-  const timeEl = document.createElement("span");
-  timeEl.className = "time";
-  timeEl.textContent = getTime(time);
-
-  messageEl.appendChild(bubble);
-  messageEl.appendChild(timeEl);
-  box.appendChild(messageEl);
-
-  if (scroll) box.scrollTop = box.scrollHeight;
-}
-
-function sendMessage() {
-  if (!currentUser || !activeFriend) return;
-  if (!isOnline(activeFriend.id)) return;
-
-  const text = $("messageInput").value.trim();
-  if (!text) return;
-
-  const msg = {
-    from: currentUser.id,
-    text,
-    time: Date.now(),
-  };
-
-  const msgs = getMessages(activeFriend.id);
-  msgs.push(msg);
-  saveMessages(activeFriend.id, msgs);
-
-  appendMessageDOM(text, "sent", msg.time);
-  renderedCount = msgs.length;
-  $("messageInput").value = "";
-  $("sendBtn").disabled = true;
-}
-
-function pollUpdates() {
-  heartbeat();
-  if (screens.friends.classList.contains("active")) {
-    renderFriends();
-  }
-  if (screens.chat.classList.contains("active") && activeFriend) {
-    updateChatOnlineState();
-    renderMessages();
+  to {
+    opacity: 1;
+    transform: translateX(0) rotateY(0) scale(1);
   }
 }
 
-function startPolling() {
-  stopPolling();
-  heartbeat();
-  pollTimer = setInterval(pollUpdates, POLL_MS);
+.message.received .bubble {
+  animation-name: message3dInLeft;
 }
 
-function stopPolling() {
-  if (pollTimer) clearInterval(pollTimer);
-  pollTimer = null;
+@keyframes message3dInLeft {
+  from {
+    opacity: 0;
+    transform: translateX(-30px) rotateY(-20deg) scale(0.85);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) rotateY(0) scale(1);
+  }
 }
 
-/* Events */
-$("loginForm").addEventListener("submit", (e) => {
-  e.preventDefault();
-  const id = normalizeId($("userId").value);
-  const name = $("userName").value.trim();
-
-  if (!id || id.length < 3) {
-    alert("ID must be at least 3 characters (letters, numbers, underscore).");
-    return;
-  }
-  if (!name) {
-    alert("Please enter your display name.");
-    return;
-  }
-
-  login({ id, name });
-});
-
-$("addFriendForm").addEventListener("submit", (e) => {
-  e.preventDefault();
-  const fid = normalizeId($("friendIdInput").value);
-
-  if (!fid) return;
-  if (fid === currentUser.id) {
-    alert("You cannot add yourself.");
-    return;
-  }
-
-  const reg = getRegistry();
-  if (!reg[fid]) {
-    reg[fid] = { name: fid, lastSeen: 0 };
-    saveJSON(STORAGE.registry, reg);
-  }
-
-  const friends = getFriends();
-  if (friends.includes(fid)) {
-    alert("Already in your friends list.");
-    $("friendIdInput").value = "";
-    return;
-  }
-
-  friends.push(fid);
-  saveFriends(friends);
-  $("friendIdInput").value = "";
-  renderFriends();
-});
-
-$("logoutBtn").addEventListener("click", logout);
-$("backBtn").addEventListener("click", () => {
-  activeFriend = null;
-  showScreen("friends");
-  renderFriends();
-});
-
-$("sendBtn").addEventListener("click", sendMessage);
-$("messageInput").addEventListener("keydown", (e) => {
-  if (e.key === "Enter") sendMessage();
-});
-$("messageInput").addEventListener("input", () => {
-  $("sendBtn").disabled =
-    !activeFriend ||
-    !isOnline(activeFriend.id) ||
-    !$("messageInput").value.trim();
-});
-
-/* Boot */
-init3DTilt();
-
-const saved = loadJSON(STORAGE.user, null);
-if (saved && saved.id && saved.name) {
-  login(saved);
-} else {
-  showScreen("login");
+.bubble {
+  padding: 10px 14px;
+  border-radius: 14px;
+  font-size: 0.95rem;
+  line-height: 1.4;
+  word-wrap: break-word;
+  transform-style: preserve-3d;
+  transition: transform 0.2s;
 }
 
-window.addEventListener("beforeunload", heartbeat);
+.bubble:hover {
+  transform: translateZ(6px) scale(1.01);
+}
+
+.sent .bubble {
+  background: #dcf8c6;
+  border-bottom-right-radius: 4px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+.received .bubble {
+  background: #fff;
+  border-bottom-left-radius: 4px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.time {
+  font-size: 0.65rem;
+  color: #667781;
+  margin-top: 4px;
+  padding: 0 4px;
+}
+
+/* Chat input */
+.chat-input {
+  padding: 10px 14px 14px;
+  background: #f0f2f5;
+  border-top: 1px solid #e0e0e0;
+  flex-shrink: 0;
+}
+
+.offline-notice {
+  font-size: 0.75rem;
+  color: #e74c3c;
+  text-align: center;
+  margin-bottom: 8px;
+  padding: 6px;
+  background: #fdecea;
+  border-radius: 8px;
+}
+
+.input-row {
+  display: flex;
+  gap: 8px;
+}
+
+.chat-input input {
+  flex: 1;
+  padding: 12px 16px;
+  border: none;
+  border-radius: 24px;
+  font-size: 0.95rem;
+  outline: none;
+  background: #fff;
+  transition: box-shadow 0.2s, transform 0.2s;
+}
+
+.chat-input input:focus:not(:disabled) {
+  box-shadow: 0 0 0 2px #075e54;
+  transform: translateZ(4px);
+}
+
+.chat-input input:disabled {
+  background: #e9edef;
+  color: #8696a0;
+}
+
+.chat-input button {
+  width: 48px;
+  height: 48px;
+  border: none;
+  border-radius: 50%;
+  background: #075e54;
+  color: #fff;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s, transform 0.2s;
+  box-shadow: 0 4px 14px rgba(7, 94, 84, 0.35);
+}
+
+.chat-input button:hover:not(:disabled) {
+  background: #128c7e;
+  transform: scale(1.08) translateZ(8px);
+}
+
+.chat-input button:disabled {
+  background: #ccc;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
