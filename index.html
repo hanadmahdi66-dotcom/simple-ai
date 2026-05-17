@@ -3,39 +3,106 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Simple Chat</title>
+  <title>Hanad Chat</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <div class="chat-app">
-    <header class="chat-header">
-      <div class="avatar">H</div>
-      <div class="header-info">
-        <h1>Hanad Chat</h1>
-        <p class="status">Online</p>
-      </div>
-    </header>
+  <div class="scene">
+    <div class="chat-app" id="chatApp">
+      <!-- Login / Create ID -->
+      <section class="screen active" id="loginScreen">
+        <div class="card-3d">
+          <div class="card-inner">
+            <div class="logo-3d">💬</div>
+            <h1>Hanad Chat</h1>
+            <p class="subtitle">Create your ID and talk with friends</p>
 
-    <main class="chat-messages" id="chatMessages">
-      <div class="message received">
-        <div class="bubble">Hello! How can I help you today?</div>
-        <span class="time">10:00 AM</span>
-      </div>
-    </main>
+            <form id="loginForm">
+              <label for="userId">Your ID</label>
+              <input
+                type="text"
+                id="userId"
+                placeholder="e.g. hanad_123"
+                maxlength="20"
+                pattern="[a-zA-Z0-9_]+"
+                required
+              />
+              <label for="userName">Display name</label>
+              <input
+                type="text"
+                id="userName"
+                placeholder="Your name"
+                maxlength="24"
+                required
+              />
+              <button type="submit" class="btn-primary">Create ID &amp; Go Online</button>
+            </form>
+            <p class="hint">Share your ID with friends so they can add you</p>
+          </div>
+        </div>
+      </section>
 
-    <footer class="chat-input">
-      <input
-        type="text"
-        id="messageInput"
-        placeholder="Type a message..."
-        autocomplete="off"
-      />
-      <button type="button" id="sendBtn" aria-label="Send message">
-        <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-          <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
-        </svg>
-      </button>
-    </footer>
+      <!-- Friends list -->
+      <section class="screen" id="friendsScreen">
+        <header class="chat-header">
+          <div class="avatar" id="myAvatar">?</div>
+          <div class="header-info">
+            <h1 id="myName">User</h1>
+            <p class="status online-badge"><span class="dot"></span> You are online</p>
+          </div>
+          <button type="button" class="btn-icon" id="logoutBtn" title="Switch account">↩</button>
+        </header>
+
+        <div class="panel">
+          <h2>Friends</h2>
+          <form class="add-friend" id="addFriendForm">
+            <input
+              type="text"
+              id="friendIdInput"
+              placeholder="Friend's ID"
+              pattern="[a-zA-Z0-9_]+"
+            />
+            <button type="submit" class="btn-small">Add</button>
+          </form>
+          <ul class="friend-list" id="friendList"></ul>
+          <p class="empty-msg hidden" id="noFriends">No friends yet. Add a friend by their ID.</p>
+        </div>
+
+        <p class="my-id-bar">Your ID: <strong id="displayMyId"></strong></p>
+      </section>
+
+      <!-- Chat with friend -->
+      <section class="screen" id="chatScreen">
+        <header class="chat-header">
+          <button type="button" class="btn-icon" id="backBtn">←</button>
+          <div class="avatar" id="friendAvatar">?</div>
+          <div class="header-info">
+            <h1 id="friendName">Friend</h1>
+            <p class="status" id="friendStatus"><span class="dot offline"></span> Offline</p>
+          </div>
+        </header>
+
+        <main class="chat-messages perspective-3d" id="chatMessages"></main>
+
+        <footer class="chat-input">
+          <p class="offline-notice hidden" id="offlineNotice">Friend is offline. You can send when they are online.</p>
+          <div class="input-row">
+            <input
+              type="text"
+              id="messageInput"
+              placeholder="Type a message..."
+              autocomplete="off"
+              disabled
+            />
+            <button type="button" id="sendBtn" aria-label="Send" disabled>
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+                <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
+              </svg>
+            </button>
+          </div>
+        </footer>
+      </section>
+    </div>
   </div>
 
   <script src="script.js"></script>
