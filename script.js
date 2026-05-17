@@ -1,17 +1,16 @@
 const STORAGE = {
   user: "hanad_current_user",
-  registry: "hanad_users",
   friends: (id) => `hanad_friends_${id}`,
-  chat: (a, b) => `hanad_chat_${[a, b].sort().join("_")}`,
+  server: "hanad_server_url",
 };
 
-const ONLINE_MS = 45000;
-const HEARTBEAT_MS = 8000;
-const POLL_MS = 2000;
-
+let socket = null;
 let currentUser = null;
 let activeFriend = null;
-let pollTimer = null;
+let onlineUsers = new Set();
+let userNames = {};
+let renderedCount = 0;
+let connected = false;
 
 const $ = (id) => document.getElementById(id);
 
@@ -43,29 +42,21 @@ function normalizeId(id) {
   return id.trim().toLowerCase().replace(/[^a-z0-9_]/g, "");
 }
 
-function getRegistry() {
-  return loadJSON(STORAGE.registry, {});
+function getServerUrl() {
+  const saved = localStorage.getItem(STORAGE.server);
+  if (saved) return saved.replace(/\/$/, "");
+  if (window.location.protocol.startsWith("http")) {
+    return window.location.origin;
+  }
+  return "http://localhost:3000";
 }
 
-function saveUserToRegistry(user) {
-  const reg = getRegistry();
-  reg[user.id] = {
-    name: user.name,
-    lastSeen: Date.now(),
-  };
-  saveJSON(STORAGE.registry, reg);
-}
-
-function isOnline(userId) {
-  const reg = getRegistry();
-  const u = reg[userId];
-  if (!u || !u.lastSeen) return false;
-  return Date.now() - u.lastSeen < ONLINE_MS;
-}
-
-function heartbeat() {
-  if (!currentUser) return;
-  saveUserToRegistry(currentUser);
+function setConnectionStatus(ok, text) {
+  const el = $("connectionStatus");
+  if (!el) return;
+  el.classList.toggle("connected", ok);
+  el.classList.toggle("disconnected", !ok);
+  el.textContent = text;
 }
 
 function getFriends() {
@@ -77,16 +68,8 @@ function saveFriends(list) {
   saveJSON(STORAGE.friends(currentUser.id), list);
 }
 
-function getChatKey(friendId) {
-  return STORAGE.chat(currentUser.id, friendId);
-}
-
-function getMessages(friendId) {
-  return loadJSON(getChatKey(friendId), []);
-}
-
-function saveMessages(friendId, messages) {
-  saveJSON(getChatKey(friendId), messages);
+function isOnline(userId) {
+  return onlineUsers.has(userId);
 }
 
 function getInitial(name) {
@@ -100,9 +83,16 @@ function getTime(ts) {
   });
 }
 
+function escapeHtml(text) {
+  const d = document.createElement("div");
+  d.textContent = text;
+  return d.innerHTML;
+}
+
 function init3DTilt() {
   const app = $("chatApp");
   const scene = document.querySelector(".scene");
+  if (!scene || !app) return;
 
   scene.addEventListener("mousemove", (e) => {
     const rect = scene.getBoundingClientRect();
@@ -116,40 +106,169 @@ function init3DTilt() {
   });
 }
 
-function login(user) {
+function connectSocket() {
+  return new Promise((resolve, reject) => {
+    if (socket?.connected) {
+      resolve();
+      return;
+    }
+
+    const url = getServerUrl();
+    localStorage.setItem(STORAGE.server, url);
+
+    if (socket) {
+      socket.removeAllListeners();
+      socket.disconnect();
+    }
+
+    setConnectionStatus(false, "Connecting to server...");
+
+    socket = io(url, {
+      transports: ["websocket", "polling"],
+      reconnection: true,
+      reconnectionAttempts: 10,
+    });
+
+    socket.on("connect", () => {
+      connected = true;
+      setConnectionStatus(true, "Connected — real-time chat active");
+      if (currentUser) {
+        registerOnServer(currentUser).then(() => {
+          renderFriends();
+          if (activeFriend) updateChatOnlineState();
+        });
+      }
+      resolve();
+    });
+
+    socket.on("connect_error", () => {
+      connected = false;
+      setConnectionStatus(
+        false,
+        "Cannot reach server. Run start.bat and open the link it shows."
+      );
+      reject(new Error("Connection failed"));
+    });
+
+    socket.on("disconnect", () => {
+      connected = false;
+      setConnectionStatus(false, "Disconnected — reconnecting...");
+      onlineUsers.clear();
+      if (screens.friends.classList.contains("active")) renderFriends();
+      if (activeFriend) updateChatOnlineState();
+    });
+
+    socket.on("online_list", (list) => {
+      onlineUsers = new Set(list);
+      if (screens.friends.classList.contains("active")) renderFriends();
+      if (activeFriend) updateChatOnlineState();
+    });
+
+    socket.on("new_message", (msg) => {
+      const peer = msg.peer || msg.from;
+      if (
+        activeFriend &&
+        (peer === activeFriend.id || msg.from === activeFriend.id)
+      ) {
+        const type = msg.from === currentUser.id ? "sent" : "received";
+        if (type === "received") {
+          appendMessageDOM(msg.text, type, msg.time);
+          renderedCount++;
+        }
+      }
+    });
+
+    socket.on("message_sent", (msg) => {
+      /* confirmation handled in sendMessage */
+    });
+  });
+}
+
+function registerOnServer(user) {
+  return new Promise((resolve, reject) => {
+    socket.emit("register", { id: user.id, name: user.name }, (res) => {
+      if (!res?.ok) {
+        reject(new Error(res?.error || "Registration failed"));
+        return;
+      }
+      onlineUsers = new Set(res.online || []);
+      if (res.users) userNames = res.users;
+      resolve();
+    });
+  });
+}
+
+async function login(user) {
+  try {
+    await connectSocket();
+    await registerOnServer(user);
+  } catch {
+    alert(
+      "Could not connect to the chat server.\n\n" +
+        "1. Double-click start.bat in this folder\n" +
+        "2. Wait for the server to start\n" +
+        "3. Open http://localhost:3000 in your browser\n" +
+        "4. Friends on same WiFi use: http://YOUR-PC-IP:3000"
+    );
+    return;
+  }
+
   currentUser = user;
   saveJSON(STORAGE.user, user);
-  saveUserToRegistry(user);
 
   $("myAvatar").textContent = getInitial(user.name);
   $("myName").textContent = user.name;
   $("displayMyId").textContent = user.id;
 
+  loadServerInfo();
   renderFriends();
   showScreen("friends");
-  startPolling();
 }
 
 function logout() {
   currentUser = null;
   activeFriend = null;
+  renderedCount = 0;
   localStorage.removeItem(STORAGE.user);
-  stopPolling();
+  if (socket) {
+    socket.disconnect();
+    socket = null;
+  }
+  connected = false;
+  onlineUsers.clear();
   showScreen("login");
   $("userId").value = "";
   $("userName").value = "";
+  setConnectionStatus(false, "Not connected");
+}
+
+async function loadServerInfo() {
+  try {
+    const res = await fetch(getServerUrl() + "/api/info");
+    const info = await res.json();
+    const bar = $("serverLinkBar");
+    if (bar) {
+      bar.innerHTML =
+        'Share with friends: <a href="' +
+        info.networkUrl +
+        '" target="_blank">' +
+        info.networkUrl +
+        "</a>";
+    }
+  } catch {
+    /* ignore */
+  }
 }
 
 function renderFriends() {
   const list = $("friendList");
   const friends = getFriends();
-  const reg = getRegistry();
 
   list.innerHTML = "";
   $("noFriends").classList.toggle("hidden", friends.length > 0);
 
   friends.forEach((fid) => {
-    const info = reg[fid] || { name: fid };
+    const info = userNames[fid] || { name: fid };
     const online = isOnline(fid);
 
     const li = document.createElement("li");
@@ -166,87 +285,65 @@ function renderFriends() {
   });
 }
 
-function escapeHtml(text) {
-  const d = document.createElement("div");
-  d.textContent = text;
-  return d.innerHTML;
-}
-
 function openChat(friendId, friendDisplayName) {
-  const reg = getRegistry();
-  const info = reg[friendId] || { name: friendDisplayName || friendId };
+  const info = userNames[friendId] || { name: friendDisplayName || friendId };
 
   activeFriend = { id: friendId, name: info.name };
   renderedCount = 0;
   $("friendAvatar").textContent = getInitial(info.name);
   $("friendName").textContent = info.name;
 
-  renderMessages(true);
+  $("chatMessages").innerHTML = "";
   updateChatOnlineState();
   showScreen("chat");
-  if (isOnline(friendId)) $("messageInput").focus();
+
+  socket.emit("get_history", { with: friendId }, (history) => {
+    $("chatMessages").innerHTML = "";
+    renderedCount = 0;
+    if (!history?.length) {
+      const empty = document.createElement("p");
+      empty.className = "empty-msg";
+      empty.style.padding = "20px";
+      empty.textContent = "No messages yet. Say hello!";
+      $("chatMessages").appendChild(empty);
+      return;
+    }
+    history.forEach((m) => {
+      const type = m.from === currentUser.id ? "sent" : "received";
+      appendMessageDOM(m.text, type, m.time, false);
+    });
+    renderedCount = history.length;
+    $("chatMessages").scrollTop = $("chatMessages").scrollHeight;
+  });
+
+  $("messageInput").focus();
 }
 
 function updateChatOnlineState() {
   if (!activeFriend) return;
 
   const online = isOnline(activeFriend.id);
-  const statusEl = $("friendStatus");
   const input = $("messageInput");
   const btn = $("sendBtn");
   const notice = $("offlineNotice");
 
-  statusEl.innerHTML = online
-    ? '<span class="dot"></span> Online — you can send messages'
+  $("friendStatus").innerHTML = online
+    ? '<span class="dot"></span> Online'
     : '<span class="dot offline"></span> Offline';
 
-  input.disabled = !online;
-  btn.disabled = !online || !input.value.trim();
-  notice.classList.toggle("hidden", online);
-
-  if (!online) input.value = "";
-}
-
-let renderedCount = 0;
-
-function renderMessages(force = false) {
-  const box = $("chatMessages");
-  if (!activeFriend || !currentUser) return;
-
-  const msgs = getMessages(activeFriend.id);
-
-  if (msgs.length === 0) {
-    if (force || box.children.length === 0) {
-      box.innerHTML = "";
-      const empty = document.createElement("p");
-      empty.className = "empty-msg";
-      empty.style.padding = "20px";
-      empty.textContent = "No messages yet. Chat when your friend is online!";
-      box.appendChild(empty);
-    }
-    renderedCount = 0;
-    return;
+  const canSend = connected && socket?.connected;
+  input.disabled = !canSend;
+  btn.disabled = !canSend || !input.value.trim();
+  if (!canSend) {
+    notice.textContent = "Start the server (start.bat) to send messages.";
+    notice.classList.remove("hidden");
+  } else if (!online) {
+    notice.textContent =
+      "Friend is offline — they will see your message when they connect.";
+    notice.classList.remove("hidden");
+  } else {
+    notice.classList.add("hidden");
   }
-
-  if (!force && msgs.length === renderedCount) return;
-
-  if (force || renderedCount === 0) {
-    box.innerHTML = "";
-    msgs.forEach((m) => {
-      const type = m.from === currentUser.id ? "sent" : "received";
-      appendMessageDOM(m.text, type, m.time, false);
-    });
-    renderedCount = msgs.length;
-  } else if (msgs.length > renderedCount) {
-    for (let i = renderedCount; i < msgs.length; i++) {
-      const m = msgs[i];
-      const type = m.from === currentUser.id ? "sent" : "received";
-      appendMessageDOM(m.text, type, m.time, false);
-    }
-    renderedCount = msgs.length;
-  }
-
-  box.scrollTop = box.scrollHeight;
 }
 
 function appendMessageDOM(text, type, time, scroll = true) {
@@ -273,55 +370,30 @@ function appendMessageDOM(text, type, time, scroll = true) {
 }
 
 function sendMessage() {
-  if (!currentUser || !activeFriend) return;
-  if (!isOnline(activeFriend.id)) return;
+  if (!currentUser || !activeFriend || !socket?.connected) return;
 
   const text = $("messageInput").value.trim();
   if (!text) return;
 
-  const msg = {
-    from: currentUser.id,
-    text,
-    time: Date.now(),
-  };
-
-  const msgs = getMessages(activeFriend.id);
-  msgs.push(msg);
-  saveMessages(activeFriend.id, msgs);
-
-  appendMessageDOM(text, "sent", msg.time);
-  renderedCount = msgs.length;
+  socket.emit("send_message", { to: activeFriend.id, text });
+  appendMessageDOM(text, "sent", Date.now());
+  renderedCount++;
   $("messageInput").value = "";
   $("sendBtn").disabled = true;
 }
 
-function pollUpdates() {
-  heartbeat();
-  if (screens.friends.classList.contains("active")) {
-    renderFriends();
-  }
-  if (screens.chat.classList.contains("active") && activeFriend) {
-    updateChatOnlineState();
-    renderMessages();
-  }
-}
-
-function startPolling() {
-  stopPolling();
-  heartbeat();
-  pollTimer = setInterval(pollUpdates, POLL_MS);
-}
-
-function stopPolling() {
-  if (pollTimer) clearInterval(pollTimer);
-  pollTimer = null;
-}
-
 /* Events */
-$("loginForm").addEventListener("submit", (e) => {
+$("loginForm").addEventListener("submit", async (e) => {
   e.preventDefault();
   const id = normalizeId($("userId").value);
   const name = $("userName").value.trim();
+  const serverInput = $("serverUrl");
+  if (serverInput?.value.trim()) {
+    localStorage.setItem(
+      STORAGE.server,
+      serverInput.value.trim().replace(/\/$/, "")
+    );
+  }
 
   if (!id || id.length < 3) {
     alert("ID must be at least 3 characters (letters, numbers, underscore).");
@@ -332,41 +404,47 @@ $("loginForm").addEventListener("submit", (e) => {
     return;
   }
 
-  login({ id, name });
+  await login({ id, name });
 });
 
 $("addFriendForm").addEventListener("submit", (e) => {
   e.preventDefault();
   const fid = normalizeId($("friendIdInput").value);
 
-  if (!fid) return;
+  if (!fid || !socket?.connected) return;
   if (fid === currentUser.id) {
     alert("You cannot add yourself.");
     return;
   }
 
-  const reg = getRegistry();
-  if (!reg[fid]) {
-    reg[fid] = { name: fid, lastSeen: 0 };
-    saveJSON(STORAGE.registry, reg);
-  }
+  socket.emit("lookup_user", { id: fid }, (user) => {
+    if (!user) {
+      alert(
+        "User not found. They must open the chat and create an ID first (same server URL)."
+      );
+      return;
+    }
 
-  const friends = getFriends();
-  if (friends.includes(fid)) {
-    alert("Already in your friends list.");
+    userNames[fid] = user;
+
+    const friends = getFriends();
+    if (friends.includes(fid)) {
+      alert("Already in your friends list.");
+      $("friendIdInput").value = "";
+      return;
+    }
+
+    friends.push(fid);
+    saveFriends(friends);
     $("friendIdInput").value = "";
-    return;
-  }
-
-  friends.push(fid);
-  saveFriends(friends);
-  $("friendIdInput").value = "";
-  renderFriends();
+    renderFriends();
+  });
 });
 
 $("logoutBtn").addEventListener("click", logout);
 $("backBtn").addEventListener("click", () => {
   activeFriend = null;
+  renderedCount = 0;
   showScreen("friends");
   renderFriends();
 });
@@ -377,20 +455,25 @@ $("messageInput").addEventListener("keydown", (e) => {
 });
 $("messageInput").addEventListener("input", () => {
   $("sendBtn").disabled =
-    !activeFriend ||
-    !isOnline(activeFriend.id) ||
-    !$("messageInput").value.trim();
+    !socket?.connected || !$("messageInput").value.trim();
 });
 
 /* Boot */
 init3DTilt();
 
+const serverInput = $("serverUrl");
+if (serverInput) {
+  serverInput.value = getServerUrl();
+  serverInput.placeholder = "http://localhost:3000";
+}
+
+setConnectionStatus(false, "Not connected — run start.bat first");
+
 const saved = loadJSON(STORAGE.user, null);
-if (saved && saved.id && saved.name) {
+if (saved?.id && saved?.name) {
   login(saved);
 } else {
   showScreen("login");
 }
 
-window.addEventListener("beforeunload", heartbeat);
 
